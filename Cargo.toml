@@ -10,3 +10,4 @@ edition = "2018"
 foundationdb = { git = "https://github.com/Clikengo/foundationdb-rs.git" }
 futures = "0.3"
 tokio = { version = "0.2", features = ["full"] }
+hex = "0.4.2"
