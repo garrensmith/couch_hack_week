@@ -1,4 +1,4 @@
-use crate::constants::{ALL_DBS, COUCHDB_PREFIX, DB_ALL_DOCS};
+use crate::constants::{ALL_DBS, COUCHDB_PREFIX, DB_ALL_DOCS, DB_STATS};
 use crate::fdb;
 
 use serde::{Serialize};
@@ -123,6 +123,37 @@ pub async fn get_db(
     let value = trx.get(key.as_slice(), false).await.unwrap().unwrap();
     let db = Database::new(Bytes::from(name), value.as_ref());
     Ok(db)
+}
+
+async fn dbs_info(trx: &Transaction, db: &Database) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+
+    let (start, end) = fdb::pack_range(&DB_STATS, db.db_prefix.as_slice());
+    let start_key = KeySelector::first_greater_or_equal(start);
+    let end_key = KeySelector::first_greater_than(end);
+    let opts = RangeOption {
+        mode: foundationdb::options::StreamingMode::WantAll,
+        ..RangeOption::from((start_key, end_key))
+    };
+
+    let iteration: usize = 1;
+    let range = trx.get_range(&opts, iteration, false).await?;
+    let rows: Vec<String> = range
+        .iter()
+        .map(|kv| {
+            let meta_key = &kv.key()[db.db_prefix.len()..];
+            let (_, meta_keyname):(i16, Bytes) = unpack(meta_key).unwrap_or_else(|error| {
+                let (prefix, _, key_name):(i16, Bytes, Bytes) = unpack(meta_key).unwrap();
+                (prefix, key_name)
+            });
+            let id: String = String::from_utf8_lossy(meta_keyname.as_ref()).into();
+
+            let value = &kv.value()[0];
+            println!("db info {:?}: {:?}", id, value);
+            id
+        })
+        .collect();
+
+    Ok(rows)
 }
 
 pub async fn all_docs(
