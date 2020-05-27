@@ -1,5 +1,5 @@
 use foundationdb::tuple;
-use foundationdb::tuple::{TuplePack, TupleUnpack};
+use foundationdb::tuple::{TuplePack};
 
 pub fn pack_with_prefix<T: TuplePack>(v: &T, prefix: &[u8]) -> Vec<u8> {
     let packed = tuple::pack(v);
@@ -17,5 +17,3 @@ pub fn pack_range<T: TuplePack>(v: &T, prefix: &[u8]) -> (Vec<u8>, Vec<u8>) {
     let end = [prefix, packed.as_ref(), b"\xFF"].concat();
     (start, end)
 }
-
-// pub fn unpack_with_prefix<T: TupleUnpack>(v: &T, prefix: &[u8]) ->
