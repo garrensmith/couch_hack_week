@@ -1,52 +1,43 @@
 use crate::constants::{ALL_DBS, COUCHDB_PREFIX, DB_ALL_DOCS, DB_STATS};
 use crate::fdb;
 
-use foundationdb::future::FdbValue;
 use foundationdb::tuple::{unpack, Bytes, Element};
-use foundationdb::Database as FdbDatabase;
 use foundationdb::{KeySelector, RangeOption, Transaction};
 use serde::Serialize;
-use std::sync::Arc;
+use crate::fdb::unpack_with_prefix;
 
 // #[derive(Clone)]
-pub struct DatabaseInfo {
-    name: String,
-    db_prefix: Vec<u8>,
-    fdb: Arc<FdbDatabase>,
-    transaction: Option<Transaction>,
-}
-
-// impl<'a> From<'a Bytes> for String {
-//     fn from(bytes: &'a Bytes) -> Self {
-//         String::from_utf8_lossy(bytes.as_bytes()).into()
-//     }
-//
+// pub struct DatabaseInfo {
+//     name: String,
+//     db_prefix: Vec<u8>,
+//     fdb: Arc<FdbDatabase>,
+//     transaction: Option<Transaction>,
 // }
 
-impl DatabaseInfo {
-    pub async fn new(fdb: Arc<FdbDatabase>, couch_directory: &[u8], name: String) -> Self {
-        let trx = fdb.create_trx().unwrap();
-        let db = get_db(&trx, couch_directory, name.as_str()).await.unwrap();
+// impl DatabaseInfo {
+//     pub async fn new(fdb: Arc<FdbDatabase>, couch_directory: &[u8], name: String) -> Self {
+//         let trx = fdb.create_trx().unwrap();
+//         let db = get_db(&trx, couch_directory, name.as_str()).await.unwrap();
 
-        DatabaseInfo {
-            name,
-            transaction: None,
-            db_prefix: db.db_prefix,
-            fdb: fdb.clone(),
-        }
-    }
+//         DatabaseInfo {
+//             name,
+//             transaction: None,
+//             db_prefix: db.db_prefix,
+//             fdb: fdb.clone(),
+//         }
+//     }
 
-    // pub fn create_trx(&mut self) -> &Transaction {
-    //     match self.transaction {
-    //         Some(trx) => &trx,
-    //         None => {
-    //             let trx = self.fdb.create_trx().unwrap();
-    //             self.transaction = Some(trx);
-    //             &trx
-    //         }
-    //     }
-    // }
-}
+//     // pub fn create_trx(&mut self) -> &Transaction {
+//     //     match self.transaction {
+//     //         Some(trx) => &trx,
+//     //         None => {
+//     //             let trx = self.fdb.create_trx().unwrap();
+//     //             self.transaction = Some(trx);
+//     //             &trx
+//     //         }
+//     //     }
+//     // }
+// }
 
 #[derive(Clone, Serialize)]
 pub struct Database {
@@ -72,20 +63,34 @@ pub struct Row {
     value: String,
 }
 
-impl From<FdbValue> for Row {
-    fn from(kv: FdbValue) -> Self {
-        println!("kb {:?}", kv);
-        let (_, _, raw_key): (Element, Element, Bytes) = unpack(kv.key()).unwrap();
-        let key: String = String::from_utf8_lossy(raw_key.as_ref()).into();
-        let value: String = String::from_utf8_lossy(kv.value()).into();
+impl Row {
 
+    pub fn new<S>(raw: S, value: String) -> Self
+        where S: Into<String> {
+        let id = raw.into();
         Row {
-            id: key.clone(),
-            key,
-            value,
+            key: id.clone(),
+            id,
+            value
         }
     }
+
 }
+
+// impl<'a> From<FdbKeyValue> for Row {
+//     fn from(kv: FdbKeyValue) -> Self {
+//         println!("kb {:?}", kv);
+//         let (_, _, raw_key): (Element, Element, Bytes) = unpack(kv.key()).unwrap();
+//         let key: String = String::from_utf8_lossy(raw_key.as_ref()).into();
+//         let value: String = String::from_utf8_lossy(kv.value()).into();
+//
+//         Row {
+//             id: key.clone(),
+//             key,
+//             value,
+//         }
+//     }
+// }
 
 pub async fn all_dbs(trx: &Transaction) -> Result<Vec<Database>, Box<dyn std::error::Error>> {
     let couch_directory = trx.get(COUCHDB_PREFIX, false).await.unwrap().unwrap();
@@ -173,21 +178,14 @@ pub async fn all_docs(
     let rows: Vec<Row> = range
         .iter()
         .map(|kv| {
-            let key = &kv.key()[db.db_prefix.len()..];
-            let (_, id_bytes): (i64, Bytes) = unpack(key).unwrap();
+            let (_, id_bytes): (i64, Vec<u8>) = unpack_with_prefix(&kv.key(), db.db_prefix.as_slice()).unwrap();
 
-            let id: String = String::from_utf8_lossy(id_bytes.as_ref()).into();
+            let id = String::from_utf8_lossy(id_bytes.as_ref());
 
             let (rev_num, raw_rev_str): (i16, Bytes) = unpack(kv.value()).unwrap();
             let rev_str = format!("{}-{}", rev_num, hex::encode(raw_rev_str.as_ref()));
 
-            let row = Row {
-                key: id.clone(),
-                id,
-                value: rev_str,
-            };
-            println!("kv {:?} {:?}", row.id, row.value);
-            row
+            Row::new(id, rev_str)
         })
         .collect();
 

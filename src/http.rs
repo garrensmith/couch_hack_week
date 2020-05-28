@@ -20,18 +20,6 @@ fn with_couch_directory(
     warp::any().map(move || couch_directory.clone())
 }
 
-fn map_test(
-    array: Vec<u8>,
-) -> impl Filter<Extract = (Vec<u8>,), Error = warp::reject::Rejection> + Clone {
-    warp::any()
-        .and(warp::path::param())
-        .map(move |name: String| {
-            println!("aa {}", name.clone());
-
-            array.clone()
-        })
-}
-
 // async fn with_db_info(
 //     fdb: Arc<FdbDatabase>,
 //     couch_directory: Vec<u8>,
