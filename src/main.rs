@@ -8,7 +8,7 @@ use couch_hack_week::couch::{get_db, all_dbs};
 async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     let fdb = FdbDatabase::default().unwrap();
 
-    let routes = http::routes();
+    let routes = http::routes().await;
     println!("Server running on port: 3030");
     warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
 

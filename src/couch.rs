@@ -3,8 +3,52 @@ use crate::fdb;
 
 use serde::{Serialize};
 use foundationdb::future::FdbValue;
+use foundationdb::Database as FdbDatabase;
 use foundationdb::tuple::{unpack, Bytes, Element};
 use foundationdb::{KeySelector, RangeOption, Transaction};
+use std::sync::Arc;
+
+
+// #[derive(Clone)]
+pub struct DatabaseInfo {
+    name: String,
+    db_prefix: Vec<u8>,
+    fdb: Arc<FdbDatabase>,
+    transaction: Option<Transaction>
+}
+
+// impl<'a> From<'a Bytes> for String {
+//     fn from(bytes: &'a Bytes) -> Self {
+//         String::from_utf8_lossy(bytes.as_bytes()).into()
+//     }
+//
+// }
+
+
+impl DatabaseInfo {
+    pub async fn new(fdb: Arc<FdbDatabase>, couch_directory: &[u8], name: String) -> Self{
+        let trx = fdb.create_trx().unwrap();
+        let db = get_db(&trx, couch_directory, name.as_str()).await.unwrap();
+
+        DatabaseInfo {
+            name,
+            transaction: None,
+            db_prefix: db.db_prefix,
+            fdb: fdb.clone()
+        }
+    }
+
+    // pub fn create_trx(&mut self) -> &Transaction {
+    //     match self.transaction {
+    //         Some(trx) => &trx,
+    //         None => {
+    //             let trx = self.fdb.create_trx().unwrap();
+    //             self.transaction = Some(trx);
+    //             &trx
+    //         }
+    //     }
+    // }
+}
 
 #[derive(Clone, Serialize)]
 pub struct Database {
@@ -14,10 +58,11 @@ pub struct Database {
 }
 
 impl Database {
-    pub fn new(name: &Bytes, db_prefix: &[u8]) -> Database {
+    // pub fn new<U: Into<String>>(name: &U, db_prefix: &[u8]) -> Database {
+    pub fn new(name: Bytes, db_prefix: &[u8]) -> Database {
         Database {
             name: String::from_utf8_lossy(name.as_ref()).into(),
-            db_prefix: db_prefix.to_vec(),
+            db_prefix: db_prefix.to_vec()
         }
     }
 }
@@ -53,7 +98,6 @@ pub async fn all_dbs(trx: &Transaction) -> Result<Vec<Database>, Box<dyn std::er
     let end_key = KeySelector::first_greater_than(end);
     let opts = RangeOption {
         mode: foundationdb::options::StreamingMode::WantAll,
-        limit: Some(5),
         ..RangeOption::from((start_key, end_key))
     };
     let iteration: usize = 1;
@@ -63,12 +107,10 @@ pub async fn all_dbs(trx: &Transaction) -> Result<Vec<Database>, Box<dyn std::er
         .iter()
         .map(|kv| {
             let (_, _, db_bytes): (Element, Element, Bytes) = unpack(kv.key()).unwrap();
-            Database::new(&db_bytes, kv.value())
+            Database::new(db_bytes, kv.value())
         })
         .collect();
 
-    let db = dbs[3].clone();
-    all_docs(trx, &db).await;
     Ok(dbs)
 }
 
@@ -79,7 +121,7 @@ pub async fn get_db(
 ) -> Result<Database, Box<dyn std::error::Error>> {
     let key = fdb::pack_with_prefix(&(ALL_DBS, Bytes::from(name)), couch_directory);
     let value = trx.get(key.as_slice(), false).await.unwrap().unwrap();
-    let db = Database::new(&Bytes::from(name), value.as_ref());
+    let db = Database::new(Bytes::from(name), value.as_ref());
     Ok(db)
 }
 
