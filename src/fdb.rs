@@ -1,5 +1,5 @@
 use foundationdb::tuple;
-use foundationdb::tuple::{TuplePack};
+use foundationdb::tuple::TuplePack;
 
 pub fn pack_with_prefix<T: TuplePack>(v: &T, prefix: &[u8]) -> Vec<u8> {
     let packed = tuple::pack(v);

@@ -1,9 +1,9 @@
 use couch_hack_week::constants::*;
-use couch_hack_week::{http};
-use foundationdb::{Database as FdbDatabase};
+use couch_hack_week::couch::{all_dbs, get_db};
+use couch_hack_week::http;
+use foundationdb::Database as FdbDatabase;
 use std::*;
 use tokio::runtime::Runtime;
-use couch_hack_week::couch::{get_db, all_dbs};
 
 async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     let fdb = FdbDatabase::default().unwrap();

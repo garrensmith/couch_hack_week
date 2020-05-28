@@ -1,20 +1,19 @@
 use crate::constants::{ALL_DBS, COUCHDB_PREFIX, DB_ALL_DOCS, DB_STATS};
 use crate::fdb;
 
-use serde::{Serialize};
 use foundationdb::future::FdbValue;
-use foundationdb::Database as FdbDatabase;
 use foundationdb::tuple::{unpack, Bytes, Element};
+use foundationdb::Database as FdbDatabase;
 use foundationdb::{KeySelector, RangeOption, Transaction};
+use serde::Serialize;
 use std::sync::Arc;
-
 
 // #[derive(Clone)]
 pub struct DatabaseInfo {
     name: String,
     db_prefix: Vec<u8>,
     fdb: Arc<FdbDatabase>,
-    transaction: Option<Transaction>
+    transaction: Option<Transaction>,
 }
 
 // impl<'a> From<'a Bytes> for String {
@@ -24,9 +23,8 @@ pub struct DatabaseInfo {
 //
 // }
 
-
 impl DatabaseInfo {
-    pub async fn new(fdb: Arc<FdbDatabase>, couch_directory: &[u8], name: String) -> Self{
+    pub async fn new(fdb: Arc<FdbDatabase>, couch_directory: &[u8], name: String) -> Self {
         let trx = fdb.create_trx().unwrap();
         let db = get_db(&trx, couch_directory, name.as_str()).await.unwrap();
 
@@ -34,7 +32,7 @@ impl DatabaseInfo {
             name,
             transaction: None,
             db_prefix: db.db_prefix,
-            fdb: fdb.clone()
+            fdb: fdb.clone(),
         }
     }
 
@@ -62,7 +60,7 @@ impl Database {
     pub fn new(name: Bytes, db_prefix: &[u8]) -> Database {
         Database {
             name: String::from_utf8_lossy(name.as_ref()).into(),
-            db_prefix: db_prefix.to_vec()
+            db_prefix: db_prefix.to_vec(),
         }
     }
 }
@@ -125,8 +123,10 @@ pub async fn get_db(
     Ok(db)
 }
 
-async fn dbs_info(trx: &Transaction, db: &Database) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-
+async fn dbs_info(
+    trx: &Transaction,
+    db: &Database,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let (start, end) = fdb::pack_range(&DB_STATS, db.db_prefix.as_slice());
     let start_key = KeySelector::first_greater_or_equal(start);
     let end_key = KeySelector::first_greater_than(end);
@@ -141,8 +141,8 @@ async fn dbs_info(trx: &Transaction, db: &Database) -> Result<Vec<String>, Box<d
         .iter()
         .map(|kv| {
             let meta_key = &kv.key()[db.db_prefix.len()..];
-            let (_, meta_keyname):(i16, Bytes) = unpack(meta_key).unwrap_or_else(|error| {
-                let (prefix, _, key_name):(i16, Bytes, Bytes) = unpack(meta_key).unwrap();
+            let (_, meta_keyname): (i16, Bytes) = unpack(meta_key).unwrap_or_else(|error| {
+                let (prefix, _, key_name): (i16, Bytes, Bytes) = unpack(meta_key).unwrap();
                 (prefix, key_name)
             });
             let id: String = String::from_utf8_lossy(meta_keyname.as_ref()).into();
