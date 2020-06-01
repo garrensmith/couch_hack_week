@@ -72,12 +72,19 @@ pub async fn routes() -> impl Filter<Extract = impl warp::Reply, Error = warp::R
         .and(with_couch_directory(couch_directory.clone()))
         .and_then(all_docs_req);
 
+    let changes_route = warp::path!(String / "_changes")
+        .and(warp::get())
+        .and(with_fdb(fdb.clone()))
+        .and(with_couch_directory(couch_directory))
+        .and_then(changes_req);
+
     let default_route = warp::get().and_then(home_req).and(warp::path::end());
 
     hi_route
         .or(all_dbs_route)
         .or(all_docs_route)
         .or(db_info_route)
+        .or(changes_route)
         .or(default_route)
 }
 
@@ -159,6 +166,26 @@ pub async fn all_docs_req(
         .await
         .unwrap();
     let docs = all_docs(&trx, &db).await.unwrap();
+
+    let resp = json!({
+        "total_rows": docs.len(),
+        "off_set": "null",
+        "rows": docs
+    });
+
+    Ok(warp::reply::json(&resp))
+}
+
+pub async fn changes_req(
+    name: String,
+    fdb: Arc<FdbDatabase>,
+    couch_directory: Vec<u8>,
+) -> Result<impl Reply> {
+    let trx = fdb.create_trx().unwrap();
+    let db = get_db(&trx, couch_directory.as_slice(), name.as_str())
+        .await
+        .unwrap();
+    let docs = changes(&trx, &db).await.unwrap();
 
     let resp = json!({
         "total_rows": docs.len(),
