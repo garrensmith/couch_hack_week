@@ -7,6 +7,12 @@ use warp::{Filter, Reply};
 
 type Result<T> = std::result::Result<T, warp::Rejection>;
 
+fn with_param(
+    param: String,
+) -> impl Filter<Extract = (String,), Error = Infallible> + Clone {
+    warp::any().map(move || param.clone())
+}
+
 fn with_fdb(
     fdb: Arc<FdbDatabase>,
 ) -> impl Filter<Extract = (Arc<FdbDatabase>,), Error = Infallible> + Clone {
@@ -75,8 +81,16 @@ pub async fn routes() -> impl Filter<Extract = impl warp::Reply, Error = warp::R
     let changes_route = warp::path!(String / "_changes")
         .and(warp::get())
         .and(with_fdb(fdb.clone()))
-        .and(with_couch_directory(couch_directory))
+        .and(with_couch_directory(couch_directory.clone()))
         .and_then(changes_req);
+
+    let changes_seq_route = warp::path!(String / "_changes" / String)
+         .and(warp::get())
+         .and(warp::get())
+         .and(with_fdb(fdb.clone()))
+         .and(with_couch_directory(couch_directory.clone()))
+         .and_then(changes_seq_req);
+
 
     let default_route = warp::get().and_then(home_req).and(warp::path::end());
 
@@ -86,6 +100,7 @@ pub async fn routes() -> impl Filter<Extract = impl warp::Reply, Error = warp::R
         .or(db_info_route)
         .or(changes_route)
         .or(default_route)
+        .or(changes_seq_route)
 }
 
 pub async fn home_req() -> Result<impl Reply> {
@@ -186,6 +201,28 @@ pub async fn changes_req(
         .await
         .unwrap();
     let docs = changes(&trx, &db).await.unwrap();
+
+    let resp = json!({
+        "total_rows": docs.len(),
+        "off_set": "null",
+        "rows": docs
+    });
+
+    Ok(warp::reply::json(&resp))
+}
+
+
+pub async fn changes_seq_req(
+    name: String,
+    seq: String,
+    fdb: Arc<FdbDatabase>,
+    couch_directory: Vec<u8>,
+) -> Result<impl Reply> {
+    let trx = fdb.create_trx().unwrap();
+    let db = get_db(&trx, couch_directory.as_slice(), name.as_str())
+        .await
+        .unwrap();
+    let docs = changes_seq(&seq, &trx, &db).await.unwrap();
 
     let resp = json!({
         "total_rows": docs.len(),
