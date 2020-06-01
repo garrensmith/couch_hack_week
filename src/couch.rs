@@ -1,43 +1,13 @@
 use crate::constants::{ALL_DBS, COUCHDB_PREFIX, DB_ALL_DOCS, DB_STATS};
 use crate::fdb;
+use crate::fdb::unpack_with_prefix;
+use crate::CouchError;
 
 use foundationdb::tuple::{unpack, Bytes, Element};
 use foundationdb::{KeySelector, RangeOption, Transaction};
 use serde::Serialize;
-use crate::fdb::unpack_with_prefix;
 
-// #[derive(Clone)]
-// pub struct DatabaseInfo {
-//     name: String,
-//     db_prefix: Vec<u8>,
-//     fdb: Arc<FdbDatabase>,
-//     transaction: Option<Transaction>,
-// }
-
-// impl DatabaseInfo {
-//     pub async fn new(fdb: Arc<FdbDatabase>, couch_directory: &[u8], name: String) -> Self {
-//         let trx = fdb.create_trx().unwrap();
-//         let db = get_db(&trx, couch_directory, name.as_str()).await.unwrap();
-
-//         DatabaseInfo {
-//             name,
-//             transaction: None,
-//             db_prefix: db.db_prefix,
-//             fdb: fdb.clone(),
-//         }
-//     }
-
-//     // pub fn create_trx(&mut self) -> &Transaction {
-//     //     match self.transaction {
-//     //         Some(trx) => &trx,
-//     //         None => {
-//     //             let trx = self.fdb.create_trx().unwrap();
-//     //             self.transaction = Some(trx);
-//     //             &trx
-//     //         }
-//     //     }
-//     // }
-// }
+pub type CouchResult<T> = Result<T, CouchError>;
 
 #[derive(Clone, Serialize)]
 pub struct Database {
@@ -64,38 +34,32 @@ pub struct Row {
 }
 
 impl Row {
-
     pub fn new<S>(raw: S, value: String) -> Self
-        where S: Into<String> {
+    where
+        S: Into<String>,
+    {
         let id = raw.into();
         Row {
             key: id.clone(),
             id,
-            value
+            value,
         }
     }
-
 }
 
-// impl<'a> From<FdbKeyValue> for Row {
-//     fn from(kv: FdbKeyValue) -> Self {
-//         println!("kb {:?}", kv);
-//         let (_, _, raw_key): (Element, Element, Bytes) = unpack(kv.key()).unwrap();
-//         let key: String = String::from_utf8_lossy(raw_key.as_ref()).into();
-//         let value: String = String::from_utf8_lossy(kv.value()).into();
-//
-//         Row {
-//             id: key.clone(),
-//             key,
-//             value,
-//         }
-//     }
-// }
+pub async fn get_directory(trx: &Transaction) -> CouchResult<Vec<u8>> {
+    let res = trx.get(COUCHDB_PREFIX, false).await?;
 
-pub async fn all_dbs(trx: &Transaction) -> Result<Vec<Database>, Box<dyn std::error::Error>> {
-    let couch_directory = trx.get(COUCHDB_PREFIX, false).await.unwrap().unwrap();
+    match res {
+        Some(val) => Ok(val.to_vec()),
+        None => Err(CouchError::Missing("couch_directory".to_string())),
+    }
+}
 
-    let (start, end) = fdb::pack_range(&ALL_DBS, couch_directory.as_ref());
+pub async fn all_dbs(trx: &Transaction) -> CouchResult<Vec<Database>> {
+    let couch_directory = get_directory(&trx).await?;
+
+    let (start, end) = fdb::pack_range(&ALL_DBS, couch_directory.as_slice());
 
     let start_key = KeySelector::first_greater_or_equal(start);
     let end_key = KeySelector::first_greater_than(end);
@@ -106,13 +70,13 @@ pub async fn all_dbs(trx: &Transaction) -> Result<Vec<Database>, Box<dyn std::er
     let iteration: usize = 1;
     let range = trx.get_range(&opts, iteration, false).await?;
 
-    let dbs: Vec<Database> = range
+    let dbs = range
         .iter()
         .map(|kv| {
-            let (_, _, db_bytes): (Element, Element, Bytes) = unpack(kv.key()).unwrap();
-            Database::new(db_bytes, kv.value())
+            let (_, _, db_bytes): (Element, Element, Bytes) = unpack(kv.key())?;
+            Ok(Database::new(db_bytes, kv.value()))
         })
-        .collect();
+        .collect::<CouchResult<Vec<Database>>>()?;
 
     Ok(dbs)
 }
@@ -121,17 +85,17 @@ pub async fn get_db(
     trx: &Transaction,
     couch_directory: &[u8],
     name: &str,
-) -> Result<Database, Box<dyn std::error::Error>> {
+) -> CouchResult<Database> {
     let key = fdb::pack_with_prefix(&(ALL_DBS, Bytes::from(name)), couch_directory);
-    let value = trx.get(key.as_slice(), false).await.unwrap().unwrap();
+    let result = trx.get(key.as_slice(), false).await?;
+
+    let value = result.ok_or(CouchError::Missing(name.to_string()))?;
+
     let db = Database::new(Bytes::from(name), value.as_ref());
     Ok(db)
 }
 
-async fn dbs_info(
-    trx: &Transaction,
-    db: &Database,
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+async fn dbs_info(trx: &Transaction, db: &Database) -> CouchResult<Vec<String>> {
     let (start, end) = fdb::pack_range(&DB_STATS, db.db_prefix.as_slice());
     let start_key = KeySelector::first_greater_or_equal(start);
     let end_key = KeySelector::first_greater_than(end);
@@ -154,17 +118,14 @@ async fn dbs_info(
 
             let value = &kv.value()[0];
             println!("db info {:?}: {:?}", id, value);
-            id
+            Ok(id)
         })
-        .collect();
+        .collect::<CouchResult<Vec<String>>>()?;
 
     Ok(rows)
 }
 
-pub async fn all_docs(
-    trx: &Transaction,
-    db: &Database,
-) -> Result<Vec<Row>, Box<dyn std::error::Error>> {
+pub async fn all_docs(trx: &Transaction, db: &Database) -> CouchResult<Vec<Row>> {
     let (start, end) = fdb::pack_range(&DB_ALL_DOCS, db.db_prefix.as_slice());
     let start_key = KeySelector::first_greater_or_equal(start);
     let end_key = KeySelector::first_greater_than(end);
@@ -175,19 +136,20 @@ pub async fn all_docs(
 
     let iter: usize = 1;
     let range = trx.get_range(&opts, iter, false).await?;
-    let rows: Vec<Row> = range
+    let rows = range
         .iter()
         .map(|kv| {
-            let (_, id_bytes): (i64, Vec<u8>) = unpack_with_prefix(&kv.key(), db.db_prefix.as_slice()).unwrap();
+            let (_, id_bytes): (i64, Vec<u8>) =
+                unpack_with_prefix(&kv.key(), db.db_prefix.as_slice())?;
 
             let id = String::from_utf8_lossy(id_bytes.as_ref());
 
-            let (rev_num, raw_rev_str): (i16, Bytes) = unpack(kv.value()).unwrap();
+            let (rev_num, raw_rev_str): (i16, Bytes) = unpack(kv.value())?;
             let rev_str = format!("{}-{}", rev_num, hex::encode(raw_rev_str.as_ref()));
 
-            Row::new(id, rev_str)
+            Ok(Row::new(id, rev_str))
         })
-        .collect();
+        .collect::<CouchResult<Vec<Row>>>()?;
 
     Ok(rows)
 }

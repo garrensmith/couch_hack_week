@@ -1,4 +1,3 @@
-use crate::constants::COUCHDB_PREFIX;
 use crate::couch::*;
 use foundationdb::Database as FdbDatabase;
 use serde_json::json;
@@ -50,12 +49,7 @@ pub async fn routes() -> impl Filter<Extract = impl warp::Reply, Error = warp::R
     let fdb = Arc::new(FdbDatabase::default().unwrap());
 
     let trx = fdb.create_trx().unwrap();
-    let couch_directory = trx
-        .get(COUCHDB_PREFIX, false)
-        .await
-        .unwrap()
-        .unwrap()
-        .to_vec();
+    let couch_directory = get_directory(&trx).await.unwrap();
 
     let hi_route = warp::get().and(warp::path("hi").map(|| "Hello, World!"));
 
