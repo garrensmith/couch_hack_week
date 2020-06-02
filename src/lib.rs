@@ -7,6 +7,7 @@ pub mod constants;
 pub mod couch;
 pub mod fdb;
 pub mod http;
+mod util;
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct CouchFdbError {
