@@ -7,9 +7,7 @@ use warp::{Filter, Reply};
 
 type Result<T> = std::result::Result<T, warp::Rejection>;
 
-fn with_param(
-    param: String,
-) -> impl Filter<Extract = (String,), Error = Infallible> + Clone {
+fn with_param(param: String) -> impl Filter<Extract = (String,), Error = Infallible> + Clone {
     warp::any().map(move || param.clone())
 }
 
@@ -91,7 +89,6 @@ pub async fn routes() -> impl Filter<Extract = impl warp::Reply, Error = warp::R
     //      .and(with_couch_directory(couch_directory.clone()))
     //      .and_then(changes_seq_req);
 
-
     let default_route = warp::get().and_then(home_req).and(warp::path::end());
 
     hi_route
@@ -100,7 +97,7 @@ pub async fn routes() -> impl Filter<Extract = impl warp::Reply, Error = warp::R
         .or(db_info_route)
         .or(changes_route)
         .or(default_route)
-        // .or(changes_seq_route)
+    // .or(changes_seq_route)
 }
 
 pub async fn home_req() -> Result<impl Reply> {
@@ -212,7 +209,6 @@ pub async fn changes_req(
 
     Ok(warp::reply::json(&resp))
 }
-
 
 // pub async fn changes_seq_req(
 //     name: String,

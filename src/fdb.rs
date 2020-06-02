@@ -32,7 +32,11 @@ pub fn pack_change_range(db_prefix: &[u8], change_vs_prefix: &[u8]) -> (Vec<u8>,
     (start, end)
 }
 
-pub fn pack_change_seq_range(db_prefix: &[u8], change_vs_prefix: &[u8], seq: &[u8]) -> (Vec<u8>, Vec<u8>) {
+pub fn pack_change_seq_range(
+    db_prefix: &[u8],
+    change_vs_prefix: &[u8],
+    seq: &[u8],
+) -> (Vec<u8>, Vec<u8>) {
     let decoded = hex::decode(seq).expect("Decoding failed");
     let start = [db_prefix, change_vs_prefix, &decoded.as_slice().to_vec()].concat();
     let end = [db_prefix, change_vs_prefix, b"\xFF"].concat();

@@ -1,14 +1,12 @@
-use crate::constants::{ALL_DBS, COUCHDB_PREFIX, DB_CHANGES, DB_ALL_DOCS, DB_STATS};
+use crate::constants::{ALL_DBS, COUCHDB_PREFIX, DB_ALL_DOCS, DB_CHANGES, DB_STATS};
 use crate::fdb;
 use crate::fdb::unpack_with_prefix;
 use crate::CouchError;
 
-use foundationdb::tuple::{unpack, Bytes, Element, Versionstamp, PackError};
+use crate::util::{bin_to_int, bin_to_string};
+use foundationdb::tuple::{unpack, Bytes, Element, PackError, Versionstamp};
 use foundationdb::{KeySelector, RangeOption, Transaction};
 use serde::Serialize;
-use crate::util::{bin_to_int, bin_to_string};
-use std::convert::{TryFrom};
-
 
 pub type CouchResult<T> = Result<T, CouchError>;
 
@@ -54,11 +52,9 @@ impl Row {
 pub struct Rev(String);
 
 impl From<(i16, Bytes<'_>)> for Rev {
-
     fn from((num, str): (i16, Bytes)) -> Self {
         Rev(format!("{}-{}", num, hex::encode(str.as_ref())))
     }
-
 }
 
 #[derive(Serialize)]
@@ -66,19 +62,20 @@ pub struct ChangeRow {
     pub seq: Seq,
     pub id: String,
     pub rev: Rev,
-    pub deleted: bool
+    pub deleted: bool,
 }
 
 impl ChangeRow {
-
     pub fn new<T, S>(id: String, rev: S, seq: T, deleted: bool) -> Self
-    where T: Into<Seq>, S: Into<Rev>
+    where
+        T: Into<Seq>,
+        S: Into<Rev>,
     {
         ChangeRow {
             seq: seq.into(),
             id,
             rev: rev.into(),
-            deleted
+            deleted,
         }
     }
 }
@@ -86,11 +83,9 @@ impl ChangeRow {
 #[derive(Serialize)]
 pub struct Seq(String);
 
-impl From<&Versionstamp> for Seq {
-    fn from(vs: &Versionstamp) -> Self {
-        Seq(
-            hex::encode(vs.as_bytes())
-        )
+impl From<Versionstamp> for Seq {
+    fn from(vs: Versionstamp) -> Self {
+        Seq(hex::encode(vs.as_bytes()))
     }
 }
 
@@ -160,7 +155,6 @@ impl DbInfo {
     }
 }
 
-
 pub async fn db_info(trx: &Transaction, db: &Database) -> CouchResult<DbInfo> {
     let (start, end) = fdb::pack_range(&DB_STATS, db.db_prefix.as_slice());
     let start_key = KeySelector::first_greater_or_equal(start);
@@ -173,7 +167,6 @@ pub async fn db_info(trx: &Transaction, db: &Database) -> CouchResult<DbInfo> {
     let iteration: usize = 1;
     let range = trx.get_range(&opts, iteration, false).await?;
     range.iter().try_fold(DbInfo::default(), |db_info, kv| {
-
         let tup: Vec<Element> = unpack_with_prefix(&kv.key(), db.db_prefix.as_slice())?;
         let stat = tup[1].as_bytes().unwrap().as_ref();
 
@@ -186,30 +179,26 @@ pub async fn db_info(trx: &Transaction, db: &Database) -> CouchResult<DbInfo> {
         let val = bin_to_int(kv.value());
 
         let acc = match (stat, size_stat) {
-            (b"doc_count", _) =>
-                DbInfo {
-                    doc_count: val,
-                    ..db_info
-                },
-            (b"doc_del_count", _) =>
-                DbInfo {
-                    doc_del_count: val,
-                    ..db_info
-                },
-            (b"sizes", b"external") =>
-                DbInfo {
-                    size_external: val,
-                    ..db_info
-                },
-            (b"sizes", b"views") =>
-                DbInfo {
-                    size_views: val,
-                    ..db_info
-                },
+            (b"doc_count", _) => DbInfo {
+                doc_count: val,
+                ..db_info
+            },
+            (b"doc_del_count", _) => DbInfo {
+                doc_del_count: val,
+                ..db_info
+            },
+            (b"sizes", b"external") => DbInfo {
+                size_external: val,
+                ..db_info
+            },
+            (b"sizes", b"views") => DbInfo {
+                size_views: val,
+                ..db_info
+            },
             _ => {
                 println!("unknown reached");
                 db_info
-            },
+            }
         };
         Ok(acc)
     })
@@ -242,11 +231,7 @@ pub async fn all_docs(trx: &Transaction, db: &Database) -> CouchResult<Vec<Row>>
         .collect::<CouchResult<Vec<Row>>>()
 }
 
-
-pub async fn changes(
-    trx: &Transaction,
-    db: &Database,
-) -> CouchResult<Vec<ChangeRow>> {
+pub async fn changes(trx: &Transaction, db: &Database) -> CouchResult<Vec<ChangeRow>> {
     let (start, end) = fdb::pack_range(&DB_CHANGES, db.db_prefix.as_slice());
     let start_key = KeySelector::first_greater_than(start);
     let end_key = KeySelector::first_greater_than(end);
@@ -262,20 +247,15 @@ pub async fn changes(
     range
         .iter()
         .map(|kv| {
-            let key: Vec<Element> = unpack(&kv.key()).unwrap();
-
-            let vs = match &key[4] {
-                Element::Versionstamp(vs) => Ok(vs),
-                _ => Err(PackError::MissingBytes)
-            }?;
-
-            let (id_bytes, deleted, rev_tuple): (Bytes, bool, (i16, Bytes)) = unpack(kv.value()).unwrap();
+            let (_, vs): (Element, Versionstamp) =
+                unpack_with_prefix(&kv.key(), db.db_prefix.as_slice()).unwrap();
+            let (id_bytes, deleted, rev_tuple): (Bytes, bool, (i16, Bytes)) =
+                unpack(kv.value()).unwrap();
 
             let doc_id = bin_to_string(&id_bytes);
             let rev: Rev = rev_tuple.into();
 
             Ok(ChangeRow::new(doc_id, rev, vs, deleted))
-
         })
         .collect::<CouchResult<Vec<ChangeRow>>>()
 }
