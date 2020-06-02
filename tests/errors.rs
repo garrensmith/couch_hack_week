@@ -18,8 +18,7 @@ async fn test_missing_database_async() {
     let directory = get_directory(&trx).await.unwrap();
     let db_name = "this-should-not-exist-123".to_string();
 
-    let res = get_db(&trx, directory.as_slice(), db_name.as_str())
-        .await;
+    let res = get_db(&trx, directory.as_slice(), db_name.as_str()).await;
 
     assert!(res.is_err());
 }

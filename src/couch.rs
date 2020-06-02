@@ -7,6 +7,8 @@ use foundationdb::tuple::{unpack, Bytes, Element};
 use foundationdb::{KeySelector, RangeOption, Transaction};
 use serde::Serialize;
 
+use byteorder::{ReadBytesExt, LittleEndian};
+
 pub type CouchResult<T> = Result<T, CouchError>;
 
 #[derive(Clone, Serialize)]
@@ -95,7 +97,32 @@ pub async fn get_db(
     Ok(db)
 }
 
-async fn dbs_info(trx: &Transaction, db: &Database) -> CouchResult<Vec<String>> {
+pub struct DbInfo {
+    pub doc_count: u64,
+    pub size_views: u64,
+    pub size_external: u64,
+    pub doc_del_count: u64,
+}
+
+impl DbInfo {
+    pub fn default() -> Self {
+        Self {
+            doc_count: 0,
+            size_views: 0,
+            size_external: 0,
+            doc_del_count: 0,
+        }
+    }
+}
+
+fn bin_to_int(mut bin: &[u8]) -> u64 {
+    match bin.read_u64::<LittleEndian>() {
+        Ok(num) => num,
+        Err(_) => 0
+    }
+}
+
+pub async fn db_info(trx: &Transaction, db: &Database) -> CouchResult<DbInfo> {
     let (start, end) = fdb::pack_range(&DB_STATS, db.db_prefix.as_slice());
     let start_key = KeySelector::first_greater_or_equal(start);
     let end_key = KeySelector::first_greater_than(end);
@@ -106,23 +133,47 @@ async fn dbs_info(trx: &Transaction, db: &Database) -> CouchResult<Vec<String>> 
 
     let iteration: usize = 1;
     let range = trx.get_range(&opts, iteration, false).await?;
-    let rows: Vec<String> = range
-        .iter()
-        .map(|kv| {
-            let meta_key = &kv.key()[db.db_prefix.len()..];
-            let (_, meta_keyname): (i16, Bytes) = unpack(meta_key).unwrap_or_else(|error| {
-                let (prefix, _, key_name): (i16, Bytes, Bytes) = unpack(meta_key).unwrap();
-                (prefix, key_name)
-            });
-            let id: String = String::from_utf8_lossy(meta_keyname.as_ref()).into();
+    range.iter().try_fold(DbInfo::default(), |db_info, kv| {
 
-            let value = &kv.value()[0];
-            println!("db info {:?}: {:?}", id, value);
-            Ok(id)
-        })
-        .collect::<CouchResult<Vec<String>>>()?;
+        let tup: Vec<Element> = unpack_with_prefix(&kv.key(), db.db_prefix.as_slice())?;
+        let stat = tup[1].as_bytes().unwrap().as_ref();
 
-    Ok(rows)
+        let size_stat = if tup.len() == 3 {
+            tup[2].as_bytes().unwrap().as_ref()
+        } else {
+            b"none"
+        };
+
+        let val = bin_to_int(kv.value());
+
+        let acc = match (stat, size_stat) {
+            (b"doc_count", _) =>
+                DbInfo {
+                    doc_count: val,
+                    ..db_info
+                },
+            (b"doc_del_count", _) =>
+                DbInfo {
+                    doc_del_count: val,
+                    ..db_info
+                },
+            (b"sizes", b"external") =>
+                DbInfo {
+                    size_external: val,
+                    ..db_info
+                },
+            (b"sizes", b"views") =>
+                DbInfo {
+                    size_views: val,
+                    ..db_info
+                },
+            _ => {
+                println!("unknown reached");
+                db_info
+            },
+        };
+        Ok(acc)
+    })
 }
 
 pub async fn all_docs(trx: &Transaction, db: &Database) -> CouchResult<Vec<Row>> {

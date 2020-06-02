@@ -1,7 +1,7 @@
 use foundationdb::tuple::PackError;
 use foundationdb::FdbError;
 use std::fmt::Display;
-use std::{error, fmt, io};
+use std::{error, fmt};
 
 pub mod constants;
 pub mod couch;

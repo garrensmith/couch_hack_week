@@ -220,6 +220,7 @@ dependencies = [
 name = "couch_hack_week"
 version = "0.1.0"
 dependencies = [
+ "byteorder",
  "foundationdb",
  "futures",
  "hex",

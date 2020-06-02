@@ -58,10 +58,18 @@ pub async fn routes() -> impl Filter<Extract = impl warp::Reply, Error = warp::R
         .and(with_fdb(fdb.clone()))
         .and_then(all_dbs_req);
 
+    let db_info_route = warp::get()
+        .and(warp::path!(String))
+        .and(warp::path::end())
+        // .and(warp::path::param())
+        .and(with_fdb(fdb.clone()))
+        .and(with_couch_directory(couch_directory.clone()))
+        .and_then(db_info_req);
+
     let all_docs_route = warp::path!(String / "_all_docs")
         .and(warp::get())
         .and(with_fdb(fdb.clone()))
-        .and(with_couch_directory(couch_directory))
+        .and(with_couch_directory(couch_directory.clone()))
         .and_then(all_docs_req);
 
     let default_route = warp::get().and_then(home_req).and(warp::path::end());
@@ -69,6 +77,7 @@ pub async fn routes() -> impl Filter<Extract = impl warp::Reply, Error = warp::R
     hi_route
         .or(all_dbs_route)
         .or(all_docs_route)
+        .or(db_info_route)
         .or(default_route)
 }
 
@@ -98,6 +107,45 @@ pub async fn all_dbs_req(fdb: Arc<FdbDatabase>) -> Result<impl Reply> {
         .map(|db| db.name.clone())
         .collect();
     Ok(warp::reply::json(&dbs))
+}
+
+pub async fn db_info_req(
+    name: String,
+    fdb: Arc<FdbDatabase>,
+    couch_directory: Vec<u8>,
+) -> Result<impl Reply> {
+    // let db_info = DatabaseInfo::new(fdb, couch_directory.as_slice(), name).await;
+    let trx = fdb.create_trx().unwrap();
+    let db = get_db(&trx, couch_directory.as_slice(), name.as_str())
+        .await
+        .unwrap();
+
+    let info = db_info(&trx, &db).await.unwrap();
+
+    let resp = json!({
+       "cluster": {
+        "n": 0,
+        "q": 0,
+        "r": 0,
+        "w": 0
+      },
+      "compact_running": false,
+      "data_size": 0,
+      "db_name": name,
+      "disk_format_version": 0,
+      "disk_size": 0,
+      "instance_start_time": "0",
+      "purge_seq": 0,
+      "update_seq": "000004b4764f07a400000000",
+      "doc_del_count": info.doc_del_count,
+      "doc_count": info.doc_count,
+      "sizes": {
+        "external": info.size_external,
+        "views": info.size_views
+      }
+    });
+
+    Ok(warp::reply::json(&resp))
 }
 
 pub async fn all_docs_req(
