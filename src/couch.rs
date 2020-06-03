@@ -3,91 +3,12 @@ use crate::fdb;
 use crate::fdb::unpack_with_prefix;
 use crate::CouchError;
 
-use crate::util::{bin_to_int, bin_to_string};
-use foundationdb::tuple::{unpack, Bytes, Element, PackError, Versionstamp};
+use crate::defs::{ChangeRow, Database, DbInfo, Id, Rev, Row};
+use crate::util::bin_to_int;
+use foundationdb::tuple::{unpack, Bytes, Element, Versionstamp};
 use foundationdb::{KeySelector, RangeOption, Transaction};
-use serde::Serialize;
 
 pub type CouchResult<T> = Result<T, CouchError>;
-
-#[derive(Clone, Serialize)]
-pub struct Database {
-    pub name: String,
-    #[serde(skip_serializing)]
-    db_prefix: Vec<u8>,
-}
-
-impl Database {
-    // pub fn new<U: Into<String>>(name: &U, db_prefix: &[u8]) -> Database {
-    pub fn new(name: Bytes, db_prefix: &[u8]) -> Database {
-        Database {
-            name: String::from_utf8_lossy(name.as_ref()).into(),
-            db_prefix: db_prefix.to_vec(),
-        }
-    }
-}
-
-#[derive(Clone, Serialize)]
-pub struct Row {
-    id: String,
-    key: String,
-    value: String,
-}
-
-impl Row {
-    pub fn new<S>(raw: S, value: String) -> Self
-    where
-        S: Into<String>,
-    {
-        let id = raw.into();
-        Row {
-            key: id.clone(),
-            id,
-            value,
-        }
-    }
-}
-
-#[derive(Serialize)]
-pub struct Rev(String);
-
-impl From<(i16, Bytes<'_>)> for Rev {
-    fn from((num, str): (i16, Bytes)) -> Self {
-        Rev(format!("{}-{}", num, hex::encode(str.as_ref())))
-    }
-}
-
-#[derive(Serialize)]
-pub struct ChangeRow {
-    pub seq: Seq,
-    pub id: String,
-    pub rev: Rev,
-    pub deleted: bool,
-}
-
-impl ChangeRow {
-    pub fn new<T, S>(id: String, rev: S, seq: T, deleted: bool) -> Self
-    where
-        T: Into<Seq>,
-        S: Into<Rev>,
-    {
-        ChangeRow {
-            seq: seq.into(),
-            id,
-            rev: rev.into(),
-            deleted,
-        }
-    }
-}
-
-#[derive(Serialize)]
-pub struct Seq(String);
-
-impl From<Versionstamp> for Seq {
-    fn from(vs: Versionstamp) -> Self {
-        Seq(hex::encode(vs.as_bytes()))
-    }
-}
 
 pub async fn get_directory(trx: &Transaction) -> CouchResult<Vec<u8>> {
     let res = trx.get(COUCHDB_PREFIX, false).await?;
@@ -101,10 +22,8 @@ pub async fn get_directory(trx: &Transaction) -> CouchResult<Vec<u8>> {
 pub async fn all_dbs(trx: &Transaction) -> CouchResult<Vec<Database>> {
     let couch_directory = get_directory(&trx).await?;
 
-    let (start, end) = fdb::pack_range(&ALL_DBS, couch_directory.as_slice());
+    let (start_key, end_key) = fdb::pack_key_range(&ALL_DBS, couch_directory.as_slice());
 
-    let start_key = KeySelector::first_greater_or_equal(start);
-    let end_key = KeySelector::first_greater_than(end);
     let opts = RangeOption {
         mode: foundationdb::options::StreamingMode::WantAll,
         ..RangeOption::from((start_key, end_key))
@@ -131,28 +50,10 @@ pub async fn get_db(
     let key = fdb::pack_with_prefix(&(ALL_DBS, Bytes::from(name)), couch_directory);
     let result = trx.get(key.as_slice(), false).await?;
 
-    let value = result.ok_or(CouchError::Missing(name.to_string()))?;
+    let value = result.ok_or_else(|| CouchError::Missing(name.to_string()))?;
 
     let db = Database::new(Bytes::from(name), value.as_ref());
     Ok(db)
-}
-
-pub struct DbInfo {
-    pub doc_count: u64,
-    pub size_views: u64,
-    pub size_external: u64,
-    pub doc_del_count: u64,
-}
-
-impl DbInfo {
-    pub fn default() -> Self {
-        Self {
-            doc_count: 0,
-            size_views: 0,
-            size_external: 0,
-            doc_del_count: 0,
-        }
-    }
 }
 
 pub async fn db_info(trx: &Transaction, db: &Database) -> CouchResult<DbInfo> {
@@ -176,6 +77,7 @@ pub async fn db_info(trx: &Transaction, db: &Database) -> CouchResult<DbInfo> {
             b"none"
         };
 
+        // should maybe implement a from trait here instead
         let val = bin_to_int(kv.value());
 
         let acc = match (stat, size_stat) {
@@ -204,6 +106,9 @@ pub async fn db_info(trx: &Transaction, db: &Database) -> CouchResult<DbInfo> {
     })
 }
 
+type EncodedRev<'a> = (i16, Bytes<'a>);
+type EncodedChangeValue<'a> = (Bytes<'a>, bool, EncodedRev<'a>);
+
 pub async fn all_docs(trx: &Transaction, db: &Database) -> CouchResult<Vec<Row>> {
     let (start, end) = fdb::pack_range(&DB_ALL_DOCS, db.db_prefix.as_slice());
     let start_key = KeySelector::first_greater_or_equal(start);
@@ -221,12 +126,12 @@ pub async fn all_docs(trx: &Transaction, db: &Database) -> CouchResult<Vec<Row>>
             let (_, id_bytes): (i64, Vec<u8>) =
                 unpack_with_prefix(&kv.key(), db.db_prefix.as_slice())?;
 
-            let id = bin_to_string(id_bytes.as_ref());
+            let id: Id = id_bytes.as_slice().into();
 
-            let (rev_num, raw_rev_str): (i16, Bytes) = unpack(kv.value())?;
-            let rev_str = format!("{}-{}", rev_num, hex::encode(raw_rev_str.as_ref()));
+            let rev_tuple: EncodedRev = unpack(kv.value())?;
+            let rev: Rev = rev_tuple.into();
 
-            Ok(Row::new(id, rev_str))
+            Ok(Row::new(id, rev))
         })
         .collect::<CouchResult<Vec<Row>>>()
 }
@@ -249,55 +154,12 @@ pub async fn changes(trx: &Transaction, db: &Database) -> CouchResult<Vec<Change
         .map(|kv| {
             let (_, vs): (Element, Versionstamp) =
                 unpack_with_prefix(&kv.key(), db.db_prefix.as_slice()).unwrap();
-            let (id_bytes, deleted, rev_tuple): (Bytes, bool, (i16, Bytes)) =
-                unpack(kv.value()).unwrap();
+            let (id_bytes, deleted, encoded_rev): EncodedChangeValue = unpack(kv.value()).unwrap();
 
-            let doc_id = bin_to_string(&id_bytes);
-            let rev: Rev = rev_tuple.into();
+            let doc_id: Id = id_bytes.as_ref().into();
+            let rev: Rev = encoded_rev.into();
 
-            Ok(ChangeRow::new(doc_id, rev, vs, deleted))
+            Ok(ChangeRow::new(doc_id, rev, vs.into(), deleted))
         })
         .collect::<CouchResult<Vec<ChangeRow>>>()
 }
-
-// pub async fn changes_seq(
-//     start_seq: &String,
-//     trx: &Transaction,
-//     db: &Database,
-// ) -> Result<Vec<FeedRow>, Box<dyn std::error::Error>> {
-//     let (start, end) = fdb::pack_change_seq_range(
-//         db.db_prefix.as_slice(),
-//         DB_CHANGES,
-//         start_seq.as_bytes()
-//     );
-//     let start_key = KeySelector::first_greater_than(start);
-//     let end_key = KeySelector::first_greater_than(end);
-//
-//     let opts = RangeOption {
-//         mode: foundationdb::options::StreamingMode::WantAll,
-//         ..RangeOption::from((start_key, end_key))
-//     };
-//
-//     let iteration: usize = 1;
-//     let range = trx.get_range(&opts, iteration, false).await?;
-//     let rows: Vec<FeedRow> = range
-//         .iter()
-//         .map(|kv| {
-//             let seq_key = &kv.key()[db.db_prefix.len() + 3..];
-//             let seq_str = format!("{}", hex::encode(seq_key.as_ref()));
-//
-//             let value = &kv.value();
-//             let (left, rev_byte) = value.split_at(value.len() - 18);
-//             let rev_str = format!("{}", hex::encode(rev_byte.as_ref()));
-//
-//             let rev = hex::encode(rev_byte.as_ref());
-//             let (prefix_docid, _) = left.split_at(left.len() - 6);
-//             let (_, doc_id) = prefix_docid.split_at(1);
-//             let id: String = String::from_utf8_lossy(doc_id.as_ref()).into();
-//             FeedRow::new(seq_str, id, rev_str)
-//
-//         })
-//         .collect();
-//
-//     Ok(rows)
-// }

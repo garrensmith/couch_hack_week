@@ -5,6 +5,7 @@ use std::{error, fmt};
 
 pub mod constants;
 pub mod couch;
+mod defs;
 pub mod fdb;
 pub mod http;
 mod util;

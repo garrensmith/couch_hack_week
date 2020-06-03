@@ -6,7 +6,3 @@ pub fn bin_to_int(mut bin: &[u8]) -> u64 {
         Err(_) => 0,
     }
 }
-
-pub fn bin_to_string(bin: &[u8]) -> String {
-    String::from_utf8_lossy(bin).into()
-}

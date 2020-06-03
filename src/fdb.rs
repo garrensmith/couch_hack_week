@@ -1,5 +1,5 @@
-use foundationdb::tuple;
 use foundationdb::tuple::{PackResult, TuplePack, TupleUnpack};
+use foundationdb::{tuple, KeySelector};
 
 pub fn pack_with_prefix<T: TuplePack>(v: &T, prefix: &[u8]) -> Vec<u8> {
     let packed = tuple::pack(v);
@@ -18,27 +18,21 @@ pub fn pack_range<T: TuplePack>(v: &T, prefix: &[u8]) -> (Vec<u8>, Vec<u8>) {
     (start, end)
 }
 
+pub fn pack_key_range<'a, T: TuplePack>(
+    v: &'a T,
+    prefix: &[u8],
+) -> (KeySelector<'a>, KeySelector<'a>) {
+    let (start, end) = pack_range(v, prefix);
+
+    let start_key = KeySelector::first_greater_or_equal(start);
+    let end_key = KeySelector::first_greater_than(end);
+    (start_key, end_key)
+}
+
 pub fn unpack_with_prefix<'de, T: TupleUnpack<'de>>(
     input: &'de [u8],
     prefix: &[u8],
 ) -> PackResult<T> {
     let input1 = &input[prefix.len()..];
     tuple::unpack(input1)
-}
-
-pub fn pack_change_range(db_prefix: &[u8], change_vs_prefix: &[u8]) -> (Vec<u8>, Vec<u8>) {
-    let start = [db_prefix, change_vs_prefix].concat();
-    let end = [db_prefix, change_vs_prefix, b"\xFF"].concat();
-    (start, end)
-}
-
-pub fn pack_change_seq_range(
-    db_prefix: &[u8],
-    change_vs_prefix: &[u8],
-    seq: &[u8],
-) -> (Vec<u8>, Vec<u8>) {
-    let decoded = hex::decode(seq).expect("Decoding failed");
-    let start = [db_prefix, change_vs_prefix, &decoded.as_slice().to_vec()].concat();
-    let end = [db_prefix, change_vs_prefix, b"\xFF"].concat();
-    (start, end)
 }
