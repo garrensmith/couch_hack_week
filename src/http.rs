@@ -1,5 +1,6 @@
 use crate::couch::*;
-use foundationdb::Database as FdbDatabase;
+use crate::{handle_rejection, CouchError};
+use foundationdb::{Database as FdbDatabase, Transaction};
 use serde_json::json;
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -19,7 +20,7 @@ fn with_couch_directory(
     warp::any().map(move || couch_directory.clone())
 }
 
-pub async fn routes() -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
+pub async fn routes() -> impl Filter<Extract = impl warp::Reply, Error = Infallible> + Clone {
     let fdb = Arc::new(FdbDatabase::default().unwrap());
 
     let trx = fdb.create_trx().unwrap();
@@ -47,7 +48,7 @@ pub async fn routes() -> impl Filter<Extract = impl warp::Reply, Error = warp::R
         .and(warp::get())
         .and(warp::path::end())
         .and(with_fdb(fdb.clone()))
-        .and(with_couch_directory(couch_directory.clone()))
+        .and(with_couch_directory(couch_directory))
         .and_then(changes_req);
 
     let default_route = warp::get().and_then(home_req).and(warp::path::end());
@@ -57,6 +58,7 @@ pub async fn routes() -> impl Filter<Extract = impl warp::Reply, Error = warp::R
         .or(all_docs_route)
         .or(db_info_route)
         .or(changes_route)
+        .recover(handle_rejection)
 }
 
 pub async fn home_req() -> Result<impl Reply> {
@@ -77,7 +79,7 @@ pub async fn home_req() -> Result<impl Reply> {
 }
 
 pub async fn all_dbs_req(fdb: Arc<FdbDatabase>) -> Result<impl Reply> {
-    let trx = fdb.create_trx().unwrap();
+    let trx = create_trx(fdb)?;
     let dbs: Vec<String> = all_dbs(&trx)
         .await
         .unwrap()
@@ -93,10 +95,8 @@ pub async fn db_info_req(
     couch_directory: Vec<u8>,
 ) -> Result<impl Reply> {
     // let db_info = DatabaseInfo::new(fdb, couch_directory.as_slice(), name).await;
-    let trx = fdb.create_trx().unwrap();
-    let db = get_db(&trx, couch_directory.as_slice(), name.as_str())
-        .await
-        .unwrap();
+    let trx = create_trx(fdb)?;
+    let db = get_db(&trx, couch_directory.as_slice(), name.as_str()).await?;
 
     let info = db_info(&trx, &db).await.unwrap();
 
@@ -131,12 +131,9 @@ pub async fn all_docs_req(
     fdb: Arc<FdbDatabase>,
     couch_directory: Vec<u8>,
 ) -> Result<impl Reply> {
-    // let db_info = DatabaseInfo::new(fdb, couch_directory.as_slice(), name).await;
-    let trx = fdb.create_trx().unwrap();
-    let db = get_db(&trx, couch_directory.as_slice(), name.as_str())
-        .await
-        .unwrap();
-    let docs = all_docs(&trx, &db).await.unwrap();
+    let trx = create_trx(fdb)?;
+    let db = get_db(&trx, couch_directory.as_slice(), name.as_str()).await?;
+    let docs = all_docs(&trx, &db).await?;
 
     let resp = json!({
         "total_rows": docs.len(),
@@ -152,11 +149,9 @@ pub async fn changes_req(
     fdb: Arc<FdbDatabase>,
     couch_directory: Vec<u8>,
 ) -> Result<impl Reply> {
-    let trx = fdb.create_trx().unwrap();
-    let db = get_db(&trx, couch_directory.as_slice(), name.as_str())
-        .await
-        .unwrap();
-    let results = changes(&trx, &db).await.unwrap();
+    let trx = create_trx(fdb)?;
+    let db = get_db(&trx, couch_directory.as_slice(), name.as_str()).await?;
+    let results = changes(&trx, &db).await?;
 
     let last_seq = &results.last().unwrap().seq;
 
@@ -169,23 +164,10 @@ pub async fn changes_req(
     Ok(warp::reply::json(&resp))
 }
 
-// pub async fn changes_seq_req(
-//     name: String,
-//     seq: String,
-//     fdb: Arc<FdbDatabase>,
-//     couch_directory: Vec<u8>,
-// ) -> Result<impl Reply> {
-//     let trx = fdb.create_trx().unwrap();
-//     let db = get_db(&trx, couch_directory.as_slice(), name.as_str())
-//         .await
-//         .unwrap();
-//     let docs = changes_seq(&seq, &trx, &db).await.unwrap();
-//
-//     let resp = json!({
-//         "total_rows": docs.len(),
-//         "off_set": "null",
-//         "rows": docs
-//     });
-//
-//     Ok(warp::reply::json(&resp))
-// }
+// A wrapper around creating a transaction so that we return a CouchError instead of a FdbError
+fn create_trx(fdb: Arc<FdbDatabase>) -> std::result::Result<Transaction, CouchError> {
+    match fdb.create_trx() {
+        Ok(trx) => Ok(trx),
+        Err(error) => Err(CouchError::from(error)),
+    }
+}

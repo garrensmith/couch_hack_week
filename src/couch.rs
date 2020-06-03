@@ -6,7 +6,7 @@ use crate::CouchError;
 use crate::defs::{ChangeRow, Database, DbInfo, Id, Rev, Row};
 use crate::util::bin_to_int;
 use foundationdb::tuple::{unpack, Bytes, Element, Versionstamp};
-use foundationdb::{KeySelector, RangeOption, Transaction};
+use foundationdb::{RangeOption, Transaction};
 
 pub type CouchResult<T> = Result<T, CouchError>;
 
@@ -57,9 +57,7 @@ pub async fn get_db(
 }
 
 pub async fn db_info(trx: &Transaction, db: &Database) -> CouchResult<DbInfo> {
-    let (start, end) = fdb::pack_range(&DB_STATS, db.db_prefix.as_slice());
-    let start_key = KeySelector::first_greater_or_equal(start);
-    let end_key = KeySelector::first_greater_than(end);
+    let (start_key, end_key) = fdb::pack_key_range(&DB_STATS, db.db_prefix.as_slice());
     let opts = RangeOption {
         mode: foundationdb::options::StreamingMode::WantAll,
         ..RangeOption::from((start_key, end_key))
@@ -110,9 +108,7 @@ type EncodedRev<'a> = (i16, Bytes<'a>);
 type EncodedChangeValue<'a> = (Bytes<'a>, bool, EncodedRev<'a>);
 
 pub async fn all_docs(trx: &Transaction, db: &Database) -> CouchResult<Vec<Row>> {
-    let (start, end) = fdb::pack_range(&DB_ALL_DOCS, db.db_prefix.as_slice());
-    let start_key = KeySelector::first_greater_or_equal(start);
-    let end_key = KeySelector::first_greater_than(end);
+    let (start_key, end_key) = fdb::pack_key_range(&DB_ALL_DOCS, db.db_prefix.as_slice());
     let opts = RangeOption {
         mode: foundationdb::options::StreamingMode::WantAll,
         ..RangeOption::from((start_key, end_key))
@@ -137,9 +133,7 @@ pub async fn all_docs(trx: &Transaction, db: &Database) -> CouchResult<Vec<Row>>
 }
 
 pub async fn changes(trx: &Transaction, db: &Database) -> CouchResult<Vec<ChangeRow>> {
-    let (start, end) = fdb::pack_range(&DB_CHANGES, db.db_prefix.as_slice());
-    let start_key = KeySelector::first_greater_than(start);
-    let end_key = KeySelector::first_greater_than(end);
+    let (start_key, end_key) = fdb::pack_key_range(&DB_CHANGES, db.db_prefix.as_slice());
 
     let opts = RangeOption {
         mode: foundationdb::options::StreamingMode::WantAll,
@@ -153,8 +147,8 @@ pub async fn changes(trx: &Transaction, db: &Database) -> CouchResult<Vec<Change
         .iter()
         .map(|kv| {
             let (_, vs): (Element, Versionstamp) =
-                unpack_with_prefix(&kv.key(), db.db_prefix.as_slice()).unwrap();
-            let (id_bytes, deleted, encoded_rev): EncodedChangeValue = unpack(kv.value()).unwrap();
+                unpack_with_prefix(&kv.key(), db.db_prefix.as_slice())?;
+            let (id_bytes, deleted, encoded_rev): EncodedChangeValue = unpack(kv.value())?;
 
             let doc_id: Id = id_bytes.as_ref().into();
             let rev: Rev = encoded_rev.into();
